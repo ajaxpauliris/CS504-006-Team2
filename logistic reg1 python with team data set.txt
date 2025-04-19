@@ -1,0 +1,79 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+import yfinance as yf
+
+# Import FRED API if using it, otherwise use yfinance or pre-downloaded data
+from pandas_datareader.data import DataReader
+import datetime
+
+# Define date range
+start = datetime.datetime(1990, 1, 1)
+end = datetime.datetime(2024, 12, 31)
+
+# Fetch economic indicators from FRED
+def fetch_fred_data():
+    indicators = {
+        'UNRATE': 'Unemployment Rate',
+        'CPIAUCSL': 'CPI',
+        'INDPRO': 'Industrial Production',
+        'FEDFUNDS': 'Fed Funds Rate',
+        'GS10': '10 Year Treasury',
+        'GS3M': '3 Month Treasury'
+    }
+
+    df = pd.DataFrame()
+    for code, name in indicators.items():
+        df[name] = DataReader(code, 'fred', start, end)
+
+    return df
+
+df = fetch_fred_data()
+
+# Drop rows with NaNs
+df.dropna(inplace=True)
+
+# Create yield spread column
+df['Yield_Spread'] = df['10 Year Treasury'] - df['3 Month Treasury']
+
+# Create target variable: 1 if inverted (spread < 0), 0 otherwise
+df['Inverted'] = (df['Yield_Spread'] < 0).astype(int)
+
+# Features (lagged to prevent look-ahead bias)
+features = ['Unemployment Rate', 'CPI', 'Industrial Production', 'Fed Funds Rate']
+df[features] = df[features].shift(1)
+df.dropna(inplace=True)
+
+# Split into train and test sets
+X = df[features]
+y = df['Inverted']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# Train logistic regression model
+model = LogisticRegression()
+model.fit(X_train, y_train)
+
+# Predict and evaluate
+y_pred = model.predict(X_test)
+print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
+print("\nClassification Report:\n", classification_report(y_test, y_pred))
+
+# Show predicted probabilities
+df_test = df.iloc[-len(y_test):].copy()
+df_test['Predicted_Prob'] = model.predict_proba(X_test)[:, 1]
+
+# Plot predicted probability vs actual inversion
+plt.figure(figsize=(12, 6))
+plt.plot(df_test.index, df_test['Predicted_Prob'], label='Predicted Probability of Inversion')
+plt.fill_between(df_test.index, 0, 1, where=df_test['Inverted'] == 1, color='red', alpha=0.2, label='Actual Inversion')
+plt.title("Predicted Probability of Yield Curve Inversion")
+plt.xlabel("Date")
+plt.ylabel("Probability")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
